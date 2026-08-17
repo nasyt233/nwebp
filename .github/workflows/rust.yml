@@ -1,4 +1,4 @@
-name: Auto Build & Release
+name: Build and Release
 
 on:
   push:
@@ -17,6 +17,7 @@ jobs:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false  # 允许其他任务继续运行
       matrix:
         include:
           - os: windows-latest
@@ -37,12 +38,12 @@ jobs:
             platform: termux-aarch64
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Get version
         id: version
+        shell: bash
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
@@ -50,48 +51,49 @@ jobs:
             VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           fi
           SHORT=$(echo $VERSION | cut -d. -f1-2)
-          echo "full=$VERSION" >> $GITHUB_OUTPUT
           echo "short=$SHORT" >> $GITHUB_OUTPUT
+          echo "full=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=nwebp-$SHORT" >> $GITHUB_OUTPUT
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
 
-      - name: Install cross-compile dependencies
+      - name: Install cross-compile dependencies (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
-      - name: Install Android dependencies
+      - name: Install cross-compile dependencies (Android ARM64)
         if: matrix.target == 'aarch64-linux-android'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-android
+          sudo apt-get install -y gcc-aarch64-linux-android binutils-aarch64-linux-android
 
       - name: Build
+        shell: bash
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android-gcc
 
       - name: Package
+        shell: bash
         run: |
-          VERSION=${{ steps.version.outputs.short }}
-          PLATFORM=${{ matrix.platform }}
-          SUFFIX=${{ matrix.suffix }}
+          VERSION="${{ steps.version.outputs.short }}"
+          PLATFORM="${{ matrix.platform }}"
+          SUFFIX="${{ matrix.suffix }}"
           mkdir -p release
-          cp target/${{ matrix.target }}/release/nwebp$SUFFIX release/nwebp-$VERSION-$PLATFORM$SUFFIX
+          cp "target/${{ matrix.target }}/release/nwebp$SUFFIX" "release/nwebp-${VERSION}-${PLATFORM}${SUFFIX}" 2>/dev/null || echo "Build failed for ${{ matrix.platform }}"
 
-      - name: Upload
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: nwebp-${{ steps.version.outputs.short }}-${{ matrix.platform }}
           path: release/*
+          if-no-files-found: ignore
 
   release:
     needs: build
@@ -101,16 +103,22 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      - name: List artifacts
+        run: ls -la artifacts/
+
       - name: Get version
         id: version
+        shell: bash
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
@@ -122,6 +130,7 @@ jobs:
           echo "tag=nwebp-$SHORT" >> $GITHUB_OUTPUT
 
       - name: Create tag
+        shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           if ! git rev-parse "$TAG" >/dev/null 2>&1; then

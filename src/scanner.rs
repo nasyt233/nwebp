@@ -1,32 +1,76 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use walkdir::WalkDir;
 
 /// 图片扩展名
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp"];
 const CACHE_TTL: Duration = Duration::from_secs(5);
 
-/// 应用状态
+// ---------- 配置结构 ----------
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Config {
+    pub title: String,
+    pub subtitle: String,
+    pub show_cover: bool,
+    pub primary_color: String,
+    pub footer: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            title: "📚 nwebp 漫画库".to_string(),
+            subtitle: "轻量级网页漫画阅读器".to_string(),
+            show_cover: true,
+            primary_color: "#667eea".to_string(),
+            footer: "⚡ 由 Rust 强力驱动 · nwebp 漫画浏览".to_string(),
+        }
+    }
+}
+
+impl Config {
+    /// 从文件加载配置，若不存在则创建默认
+    pub fn load_from_file(root: &Path) -> Self {
+        let path = root.join("nwebp.json");
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = serde_json::from_str(&content) {
+                return cfg;
+            }
+        }
+        let cfg = Config::default();
+        let _ = std::fs::write(&path, serde_json::to_string_pretty(&cfg).unwrap());
+        cfg
+    }
+}
+
+// ---------- 应用状态 ----------
 pub struct AppState {
     pub root_dir: PathBuf,
+    pub config: Arc<RwLock<Config>>,
     albums_cache: Arc<Mutex<Option<(Vec<Album>, Instant)>>>,
     images_cache: Arc<Mutex<HashMap<String, (AlbumImages, Instant)>>>,
 }
 
 impl AppState {
     pub fn new(root_dir: PathBuf) -> Self {
+        let config = Arc::new(RwLock::new(Config::load_from_file(&root_dir)));
         Self {
             root_dir,
+            config,
             albums_cache: Arc::new(Mutex::new(None)),
             images_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// 异步获取所有本子（带缓存）
+    /// 获取配置（只读）
+    pub async fn get_config(&self) -> Config {
+        self.config.read().await.clone()
+    }
+
     pub async fn scan_albums(&self) -> Vec<Album> {
         {
             let cache = self.albums_cache.lock().await;
@@ -47,7 +91,6 @@ impl AppState {
         albums
     }
 
-    /// 异步获取指定本子的图片列表（带缓存）
     pub async fn get_album_images(&self, album_path: &str) -> Option<AlbumImages> {
         {
             let cache = self.images_cache.lock().await;
@@ -73,28 +116,27 @@ impl AppState {
         }
     }
 
-    /// 安全解析文件路径，防止目录穿越
+    /// 安全解析文件路径
     pub fn resolve_path(&self, rel_path: &str) -> Option<PathBuf> {
         if rel_path.is_empty() {
             return None;
         }
         let full = self.root_dir.join(rel_path);
-        // 尝试规范化为绝对路径（支持符号链接）
         if let Ok(canon) = full.canonicalize() {
             if canon.starts_with(&self.root_dir) && canon.is_file() {
                 return Some(canon);
             }
         }
-        // 如果 canonicalize 失败，使用词法规范化
         let normalized = full.components().collect::<PathBuf>();
         if normalized.starts_with(&self.root_dir) && normalized.is_file() {
-            return Some(normalized);
+            Some(normalized)
+        } else {
+            None
         }
-        None
     }
 }
 
-/// 同步扫描本子列表
+// ---------- 同步扫描函数 ----------
 fn do_scan_albums(root_dir: &Path) -> Vec<Album> {
     let mut albums = Vec::new();
     for entry in WalkDir::new(root_dir).min_depth(1).max_depth(3) {
@@ -106,10 +148,17 @@ fn do_scan_albums(root_dir: &Path) -> Vec<Album> {
             continue;
         }
         let path = entry.path();
-        let images = list_images(path);
+        let mut images = list_images(path);
         if images.is_empty() {
             continue;
         }
+        // 自然排序，确保第一张是真正的首图
+        images.sort_by(|a, b| {
+            let a_name = a.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+            let b_name = b.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+            natord::compare(&a_name, &b_name)
+        });
+
         let relative = path.strip_prefix(root_dir)
             .unwrap_or(path)
             .to_string_lossy()
@@ -134,7 +183,6 @@ fn do_scan_albums(root_dir: &Path) -> Vec<Album> {
     albums
 }
 
-/// 同步扫描单个本子的图片
 fn do_get_album_images(root_dir: &Path, album_path: &str) -> Option<AlbumImages> {
     let full_path = root_dir.join(album_path);
     if !full_path.is_dir() {
@@ -166,7 +214,7 @@ fn do_get_album_images(root_dir: &Path, album_path: &str) -> Option<AlbumImages>
     })
 }
 
-// ---- 数据结构 ----
+// ---------- 数据结构 ----------
 #[derive(Serialize, Clone)]
 pub struct Album {
     pub name: String,
@@ -182,7 +230,7 @@ pub struct AlbumImages {
     pub images: Vec<String>,
 }
 
-// ---- 辅助函数 ----
+// ---------- 辅助函数 ----------
 fn is_image(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -203,7 +251,7 @@ fn list_images(dir: &Path) -> Vec<PathBuf> {
     images
 }
 
-/// 自然排序模块
+// ---------- 自然排序模块 ----------
 mod natord {
     use std::cmp::Ordering;
     pub fn compare(a: &str, b: &str) -> Ordering {

@@ -1,12 +1,20 @@
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-use crate::scanner::{Album, AlbumImages};
+use crate::scanner::{Album, AlbumImages, Config};
 
-/// 渲染首页
-pub fn render_index(albums: &[Album]) -> String {
+const DEFAULT_COVER: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='300'%3E%3Crect fill='%23e0e0e0' width='200' height='300'/%3E%3Ctext fill='%23999' x='100' y='150' text-anchor='middle'%3E无封面%3C/text%3E%3C/svg%3E";
+
+/// 渲染首页 - 使用配置
+pub fn render_index(albums: &[Album], config: &Config) -> String {
+    let accent_color = &config.primary_color;
+
     let album_cards: String = albums.iter().map(|album| {
-        let cover_url = album.cover.as_ref()
-            .map(|c| format!("/raw?path={}", url_encode(c)))
-            .unwrap_or_else(|| "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='300'%3E%3Crect fill='%23e0e0e0' width='200' height='300'/%3E%3Ctext fill='%23999' x='100' y='150' text-anchor='middle'%3E无封面%3C/text%3E%3C/svg%3E".to_string());
+        let cover_url = if config.show_cover {
+            album.cover.as_ref()
+                .map(|c| format!("/raw?path={}", url_encode(c)))
+                .unwrap_or_else(|| DEFAULT_COVER.to_string())
+        } else {
+            DEFAULT_COVER.to_string()
+        };
         let viewer_url = format!("/viewer?path={}", url_encode(&album.path));
         format!(r#"
         <a class="album-card" href="{viewer_url}" data-name="{name_lower}">
@@ -38,7 +46,7 @@ pub fn render_index(albums: &[Album]) -> String {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>nwebp - 漫画库</title>
+<title>{title}</title>
 <style>
 :root {{
     --bg: #667eea;
@@ -47,7 +55,7 @@ pub fn render_index(albums: &[Album]) -> String {
     --text-secondary: #666;
     --card-bg: #f8f8f8;
     --card-shadow: rgba(0,0,0,0.1);
-    --accent: #667eea;
+    --accent: {accent};
     --search-bg: #f0f0f0;
     --cover-bg: #e0e0e0;
     --stats-bg: #f0f0f0;
@@ -146,6 +154,11 @@ body {{
     border: 1px solid var(--border-color);
 }}
 .stats-item .num {{ font-weight: 700; color: var(--accent); }}
+.subtitle {{
+    color: var(--text-secondary);
+    margin-bottom: 15px;
+    font-size: 1em;
+}}
 .album-grid {{
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -217,7 +230,7 @@ body {{
 <div class="container">
     <div class="header">
         <div class="header-left">
-            <h1>📚 nwebp 漫画库</h1>
+            <h1>{title}</h1>
         </div>
         <div class="header-right">
             <div class="search-box">
@@ -231,18 +244,18 @@ body {{
         <span class="stats-item">📚 共 <span class="num" id="totalCount">{count}</span> 本</span>
         <span class="stats-item">🔍 显示 <span class="num" id="visibleCount">{count}</span> 本</span>
     </div>
+    <div class="subtitle">{subtitle}</div>
     {empty_hint}
     <div class="album-grid" id="albumGrid">
         {cards}
     </div>
     <div class="no-result" id="noResult">😢 没有找到匹配的漫画</div>
     <div class="footer">
-        <p>⚡ 由 <span>Rust</span> 强力驱动 · nwebp 漫画浏览</p>
+        <p>{footer}</p>
     </div>
 </div>
 <script>
 (function() {{
-    // 主题
     const saved = localStorage.getItem('nwebp_theme');
     if (saved === 'night') {{
         document.body.dataset.theme = 'night';
@@ -255,7 +268,6 @@ body {{
         localStorage.setItem('nwebp_theme', newTheme);
         document.getElementById('themeToggle').textContent = newTheme === 'night' ? '☀️ 日间' : '🌙 夜间';
     }};
-    // 搜索
     window.filterAlbums = function() {{
         const query = document.getElementById('searchInput').value.toLowerCase().trim();
         const cards = document.querySelectorAll('.album-card');
@@ -272,11 +284,8 @@ body {{
         document.getElementById('visibleCount').textContent = visible;
         document.getElementById('noResult').style.display = visible === 0 ? 'block' : 'none';
     }};
-
-    // 修复从阅读页返回时，底部懒加载图片不显示的问题
     window.addEventListener('pageshow', (e) => {{
         if (e.persisted) {{
-            // 从 bfcache 恢复，触发滚动让浏览器重新计算懒加载
             window.dispatchEvent(new Event('scroll'));
         }}
     }});
@@ -285,13 +294,17 @@ body {{
 </body>
 </html>
 "#,
+        title = config.title,
+        subtitle = config.subtitle,
+        footer = config.footer,
+        accent = accent_color,
         count = albums.len(),
         empty_hint = empty_hint,
         cards = album_cards,
     )
 }
 
-/// 渲染阅读页 - 支持翻页和滚动（滚动模式使用懒加载）
+/// 渲染阅读页 - 无变化
 pub fn render_viewer(album: &AlbumImages) -> String {
     let images_json = serde_json::to_string(&album.images).unwrap_or_default();
     let name = html_escape(&album.name);
@@ -487,7 +500,6 @@ function showPage(index) {{
     }};
     img.onerror = () => {{ loading.textContent = '加载失败'; }};
     img.src = imgUrl(images[index]);
-    // 预加载前后5张
     for (let i = index - 5; i <= index + 5; i++) {{
         if (i !== index) preload(i);
     }}
@@ -534,7 +546,6 @@ function toggleMode() {{
 
 function setupScrollMode() {{
     const viewer = document.getElementById('viewer');
-    // 创建占位容器
     const fragment = document.createDocumentFragment();
     for (let i = 0; i < total; i++) {{
         const container = document.createElement('div');
@@ -545,7 +556,6 @@ function setupScrollMode() {{
     }}
     viewer.appendChild(fragment);
 
-    // IntersectionObserver 懒加载
     const observer = new IntersectionObserver((entries) => {{
         entries.forEach(entry => {{
             if (entry.isIntersecting) {{
@@ -559,7 +569,6 @@ function setupScrollMode() {{
                         img.style.width = '100%';
                         img.style.display = 'block';
                         container.appendChild(img);
-                        // 预加载相邻图片
                         preload(index - 1);
                         preload(index + 1);
                     }};
@@ -568,7 +577,6 @@ function setupScrollMode() {{
                     }};
                     img.src = imgUrl(images[index]);
                 }}
-                // 取消观察已加载或已可见的
                 observer.unobserve(container);
             }}
         }});
@@ -578,7 +586,6 @@ function setupScrollMode() {{
     scrollObserver = observer;
 }}
 
-// 键盘、触屏、点击等事件（不变）
 document.addEventListener('keydown', (e) => {{
     if (!flipMode) return;
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') prevPage();
@@ -631,6 +638,7 @@ else loading.textContent = '没有图片';
     )
 }
 
+// ---------- 辅助函数 ----------
 fn url_encode(s: &str) -> String {
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }

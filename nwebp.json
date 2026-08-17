@@ -1,0 +1,7 @@
+{
+  "title": "📚 nwebp 漫画库",
+  "subtitle": "轻量级网页漫画阅读器",
+  "show_cover": true,
+  "primary_color": "#667eea",
+  "footer": "⚡ 由 Rust 强力驱动 · nwebp 漫画浏览"
+}

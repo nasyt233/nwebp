@@ -304,7 +304,7 @@ body {{
     )
 }
 
-/// 渲染阅读页 - 无变化
+/// 渲染阅读页 - 支持翻页和滚动
 pub fn render_viewer(album: &AlbumImages) -> String {
     let images_json = serde_json::to_string(&album.images).unwrap_or_default();
     let name = html_escape(&album.name);
@@ -396,7 +396,8 @@ body {{
 }}
 .viewer-scroll .lazy-placeholder {{
     width: 100%;
-    min-height: 200px;
+    max-width: 100%;
+    min-height: 100px;
     background: #1a1a1a;
     margin-bottom: 10px;
     display: flex;
@@ -406,7 +407,9 @@ body {{
     font-size: 0.9em;
 }}
 .viewer-scroll img {{
+    width: 100%;
     max-width: 100%;
+    height: auto;
     display: block;
     margin-bottom: 10px;
 }}
@@ -565,8 +568,15 @@ function setupScrollMode() {{
                     container.dataset.loaded = 'true';
                     const img = new Image();
                     img.onload = () => {{
-                        container.textContent = '';
+                        // 清空容器
+                        container.innerHTML = '';
+                        // 移除占位样式，让容器自适应图片高度
+                        container.style.display = 'block';
+                        container.style.minHeight = 'auto';
+                        container.style.height = 'auto';
+                        // 图片样式
                         img.style.width = '100%';
+                        img.style.height = 'auto';
                         img.style.display = 'block';
                         container.appendChild(img);
                         preload(index - 1);
@@ -574,6 +584,7 @@ function setupScrollMode() {{
                     }};
                     img.onerror = () => {{
                         container.textContent = '加载失败';
+                        container.style.minHeight = '100px';
                     }};
                     img.src = imgUrl(images[index]);
                 }}
@@ -638,7 +649,6 @@ else loading.textContent = '没有图片';
     )
 }
 
-// ---------- 辅助函数 ----------
 fn url_encode(s: &str) -> String {
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }

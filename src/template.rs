@@ -1,37 +1,48 @@
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use crate::scanner::{Album, AlbumImages, Config};
+use chrono::DateTime;
 
 const DEFAULT_COVER: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='300'%3E%3Crect fill='%23e0e0e0' width='200' height='300'/%3E%3Ctext fill='%23999' x='100' y='150' text-anchor='middle'%3E无封面%3C/text%3E%3C/svg%3E";
 
-/// 渲染首页 - 使用配置
 pub fn render_index(albums: &[Album], config: &Config) -> String {
     let accent_color = &config.primary_color;
+    let columns = config.columns.max(1).min(6);
 
     let album_cards: String = albums.iter().map(|album| {
-        let cover_url = if config.show_cover {
-            album.cover.as_ref()
-                .map(|c| format!("/raw?path={}", url_encode(c)))
-                .unwrap_or_else(|| DEFAULT_COVER.to_string())
-        } else {
-            DEFAULT_COVER.to_string()
-        };
+        let cover_url = album.cover.as_ref()
+            .map(|c| format!("/raw?path={}", url_encode(c)))
+            .unwrap_or_else(|| DEFAULT_COVER.to_string());
         let viewer_url = format!("/viewer?path={}", url_encode(&album.path));
+
+        let time_str = if album.modified > 0 {
+            if let Some(dt) = DateTime::from_timestamp(album.modified as i64, 0) {
+                dt.format("%Y-%m-%d %H:%M").to_string()
+            } else {
+                "未知".to_string()
+            }
+        } else {
+            "未知".to_string()
+        };
+
         format!(r#"
-        <a class="album-card" href="{viewer_url}" data-name="{name_lower}">
+        <a class="album-card" href="{viewer_url}" data-name="{name_lower}" data-modified="{modified}" data-cover="{cover}">
             <div class="cover">
-                <img src="{cover_url}" alt="{name}" loading="lazy" decoding="async">
+                <img src="{cover}" alt="{name}" loading="lazy" decoding="async">
             </div>
             <div class="info">
                 <div class="title" title="{name}">{name}</div>
                 <div class="count">{count} 页</div>
+                <div class="time">{time}</div>
             </div>
         </a>
         "#,
             viewer_url = viewer_url,
-            cover_url = cover_url,
+            cover = cover_url,
             name = html_escape(&album.name),
             name_lower = html_escape(&album.name.to_lowercase()),
             count = album.image_count,
+            modified = album.modified,
+            time = html_escape(&time_str),
         )
     }).collect();
 
@@ -40,6 +51,325 @@ pub fn render_index(albums: &[Album], config: &Config) -> String {
     } else {
         ""
     };
+
+    let sort_html = r#"
+<div class="sort-container">
+    <label for="sortSelect">排序：</label>
+    <select id="sortSelect" onchange="sortAlbums()">
+        <option value="name">按名称</option>
+        <option value="name-desc">按名称（倒序）</option>
+        <option value="time">按时间</option>
+        <option value="time-desc">按时间（倒序）</option>
+        <option value="count">按数量</option>
+        <option value="count-desc">按数量（倒序）</option>
+    </select>
+</div>
+"#;
+
+    let sort_css = r#"
+.sort-container {
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.sort-container select {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-primary);
+}
+.album-card .time {
+    font-size: 0.7em;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+"#;
+
+    let sort_js = r#"
+function sortAlbums() {
+    const grid = document.getElementById('albumGrid');
+    const cards = Array.from(grid.querySelectorAll('.album-card'));
+    const sortBy = document.getElementById('sortSelect').value;
+    
+    cards.sort((a, b) => {
+        let aVal, bVal;
+        if (sortBy === 'name') {
+            aVal = a.getAttribute('data-name') || '';
+            bVal = b.getAttribute('data-name') || '';
+            return aVal.localeCompare(bVal);
+        } else if (sortBy === 'name-desc') {
+            aVal = a.getAttribute('data-name') || '';
+            bVal = b.getAttribute('data-name') || '';
+            return bVal.localeCompare(aVal);
+        } else if (sortBy === 'time') {
+            aVal = parseInt(a.getAttribute('data-modified')) || 0;
+            bVal = parseInt(b.getAttribute('data-modified')) || 0;
+            return aVal - bVal;
+        } else if (sortBy === 'time-desc') {
+            aVal = parseInt(a.getAttribute('data-modified')) || 0;
+            bVal = parseInt(b.getAttribute('data-modified')) || 0;
+            return bVal - aVal;
+        } else if (sortBy === 'count') {
+            const aCount = a.querySelector('.count')?.textContent || '0';
+            const bCount = b.querySelector('.count')?.textContent || '0';
+            aVal = parseInt(aCount) || 0;
+            bVal = parseInt(bCount) || 0;
+            return aVal - bVal;
+        } else if (sortBy === 'count-desc') {
+            const aCount = a.querySelector('.count')?.textContent || '0';
+            const bCount = b.querySelector('.count')?.textContent || '0';
+            aVal = parseInt(aCount) || 0;
+            bVal = parseInt(bCount) || 0;
+            return bVal - aVal;
+        }
+        return 0;
+    });
+    
+    cards.forEach(card => grid.appendChild(card));
+}
+"#;
+
+    let cover_js = r#"
+const COVER_KEY = 'nwebp_show_cover';
+let showCover = localStorage.getItem(COVER_KEY) === 'true';
+
+function applyCoverState() {
+    const cards = document.querySelectorAll('.album-card');
+    const defaultCover = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22300%22%3E%3Crect fill=%22%23e0e0e0%22 width=%22200%22 height=%22300%22/%3E%3Ctext fill=%22%23999%22 x=%22100%22 y=%22150%22 text-anchor=%22middle%22%3E无封面%3C/text%3E%3C/svg%3E';
+    cards.forEach(card => {
+        const img = card.querySelector('.cover img');
+        if (img) {
+            if (showCover) {
+                img.src = card.getAttribute('data-cover') || defaultCover;
+            } else {
+                img.src = defaultCover;
+            }
+        }
+    });
+    const btn = document.getElementById('coverToggle');
+    if (btn) btn.textContent = showCover ? '隐藏封面' : '显示封面';
+}
+
+function toggleCover() {
+    showCover = !showCover;
+    localStorage.setItem(COVER_KEY, showCover ? 'true' : 'false');
+    applyCoverState();
+}
+"#;
+
+    let popup_css = if config.popup_enabled {
+        r#"
+.popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    animation: fadeIn 0.3s ease;
+}
+.popup-container {
+    background: var(--container-bg);
+    border-radius: 16px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    animation: slideUp 0.3s ease;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+.popup-header {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.popup-header h2 {
+    font-size: 1.3rem;
+    color: var(--accent);
+    margin: 0;
+    font-weight: 600;
+}
+.popup-close {
+    background: none;
+    border: none;
+    font-size: 28px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0 8px;
+    line-height: 1;
+    transition: color 0.2s;
+}
+.popup-close:hover {
+    color: var(--text-primary);
+}
+.popup-body {
+    padding: 24px;
+    color: var(--text-primary);
+    line-height: 1.8;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+.popup-body p {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.popup-footer {
+    padding: 16px 24px 20px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+.popup-btn {
+    padding: 8px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.popup-btn.confirm {
+    background: var(--accent);
+    color: #fff;
+}
+.popup-btn.confirm:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+.popup-btn.cancel {
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+.popup-btn.cancel:hover {
+    background: var(--border-color);
+}
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes slideUp {
+    from { 
+        opacity: 0;
+        transform: translateY(30px) scale(0.95);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+[data-theme="night"] .popup-overlay {
+    background: rgba(0, 0, 0, 0.75);
+}
+[data-theme="night"] .popup-btn.cancel {
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    border-color: var(--border-color);
+}
+"#
+    } else {
+        ""
+    };
+
+    let popup_html = if config.popup_enabled {
+        format!(r#"
+<div id="popupOverlay" class="popup-overlay">
+    <div class="popup-container">
+        <div class="popup-header">
+            <h2>{title}</h2>
+            <button class="popup-close" onclick="closePopup()">&times;</button>
+        </div>
+        <div class="popup-body">
+            <p>{content}</p>
+        </div>
+        <div class="popup-footer">
+            {cancel_btn}
+            <button class="popup-btn confirm" onclick="closePopup()">{confirm_text}</button>
+        </div>
+    </div>
+</div>
+"#,
+            title = html_escape(&config.popup_title),
+            content = html_escape(&config.popup_content).replace("\n", "<br>"),
+            confirm_text = html_escape(&config.popup_confirm_text),
+            cancel_btn = if !config.popup_cancel_text.is_empty() {
+                format!(r#"<button class="popup-btn cancel" onclick="closePopup()">{}</button>"#, html_escape(&config.popup_cancel_text))
+            } else {
+                "".to_string()
+            },
+        )
+    } else {
+        "".to_string()
+    };
+
+    let popup_js = if config.popup_enabled {
+        format!(r#"
+const POPUP_KEY = 'nwebp_popup_shown';
+
+function showPopup() {{
+    const overlay = document.getElementById('popupOverlay');
+    if (!overlay) return;
+    const showOnce = {};
+    if (showOnce && localStorage.getItem(POPUP_KEY) === 'true') {{
+        return;
+    }}
+    overlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+}}
+
+function closePopup() {{
+    const overlay = document.getElementById('popupOverlay');
+    if (!overlay) return;
+    overlay.style.display = 'none';
+    document.body.style.overflow = '';
+    const showOnce = {};
+    if (showOnce) {{
+        localStorage.setItem(POPUP_KEY, 'true');
+    }}
+}}
+
+document.addEventListener('click', function(e) {{
+    const overlay = document.getElementById('popupOverlay');
+    if (!overlay) return;
+    if (e.target === overlay) {{
+        closePopup();
+    }}
+}});
+
+document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+        closePopup();
+    }}
+}});
+
+if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', showPopup);
+}} else {{
+    showPopup();
+}}
+"#,
+            if config.popup_show_once { "true" } else { "false" },
+            if config.popup_show_once { "true" } else { "false" },
+        )
+    } else {
+        "".to_string()
+    };
+
+    // 修复网格溢出：限制卡片宽度，居中对齐
+    let grid_style = format!("grid-template-columns: repeat({}, 1fr);", columns);
 
     format!(r#"<!DOCTYPE html>
 <html lang="zh-CN">
@@ -161,8 +491,10 @@ body {{
 }}
 .album-grid {{
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    {grid_style}
     gap: 16px;
+    max-width: 100%;
+    justify-items: center;
 }}
 .album-card {{
     text-decoration: none;
@@ -174,6 +506,8 @@ body {{
     transition: transform 0.15s, box-shadow 0.15s;
     cursor: pointer;
     will-change: transform;
+    max-width: 200px;
+    width: 100%;
 }}
 .album-card:hover {{
     transform: translateY(-3px);
@@ -218,6 +552,8 @@ body {{
     color: var(--text-secondary);
 }}
 .footer span {{ color: var(--accent); }}
+{sort_css}
+{popup_css}
 @media (max-width: 768px) {{
     .container {{ margin: 15px; padding: 20px; }}
     .header-left h1 {{ font-size: 22px; }}
@@ -237,6 +573,7 @@ body {{
                 <span>🔍</span>
                 <input type="text" id="searchInput" placeholder="搜索漫画..." oninput="filterAlbums()">
             </div>
+            <button class="theme-btn" id="coverToggle" onclick="toggleCover()">显示封面</button>
             <button class="theme-btn" id="themeToggle" onclick="toggleTheme()">🌙 夜间</button>
         </div>
     </div>
@@ -245,6 +582,7 @@ body {{
         <span class="stats-item">🔍 显示 <span class="num" id="visibleCount">{count}</span> 本</span>
     </div>
     <div class="subtitle">{subtitle}</div>
+    {sort_html}
     {empty_hint}
     <div class="album-grid" id="albumGrid">
         {cards}
@@ -254,6 +592,9 @@ body {{
         <p>{footer}</p>
     </div>
 </div>
+
+{popup_html}
+
 <script>
 (function() {{
     const saved = localStorage.getItem('nwebp_theme');
@@ -268,6 +609,7 @@ body {{
         localStorage.setItem('nwebp_theme', newTheme);
         document.getElementById('themeToggle').textContent = newTheme === 'night' ? '☀️ 日间' : '🌙 夜间';
     }};
+
     window.filterAlbums = function() {{
         const query = document.getElementById('searchInput').value.toLowerCase().trim();
         const cards = document.querySelectorAll('.album-card');
@@ -283,13 +625,24 @@ body {{
         }});
         document.getElementById('visibleCount').textContent = visible;
         document.getElementById('noResult').style.display = visible === 0 ? 'block' : 'none';
+        sortAlbums();
     }};
+
     window.addEventListener('pageshow', (e) => {{
         if (e.persisted) {{
             window.dispatchEvent(new Event('scroll'));
         }}
     }});
 }})();
+
+{sort_js}
+{cover_js}
+{popup_js}
+
+document.addEventListener('DOMContentLoaded', function() {{
+    applyCoverState();
+    sortAlbums();
+}});
 </script>
 </body>
 </html>
@@ -301,10 +654,18 @@ body {{
         count = albums.len(),
         empty_hint = empty_hint,
         cards = album_cards,
+        sort_html = sort_html,
+        sort_css = sort_css,
+        sort_js = sort_js,
+        cover_js = cover_js,
+        popup_css = popup_css,
+        popup_html = popup_html,
+        popup_js = popup_js,
+        grid_style = grid_style,
     )
 }
 
-/// 渲染阅读页 - 支持翻页和滚动
+/// 渲染阅读页
 pub fn render_viewer(album: &AlbumImages) -> String {
     let images_json = serde_json::to_string(&album.images).unwrap_or_default();
     let name = html_escape(&album.name);
@@ -568,13 +929,10 @@ function setupScrollMode() {{
                     container.dataset.loaded = 'true';
                     const img = new Image();
                     img.onload = () => {{
-                        // 清空容器
                         container.innerHTML = '';
-                        // 移除占位样式，让容器自适应图片高度
                         container.style.display = 'block';
                         container.style.minHeight = 'auto';
                         container.style.height = 'auto';
-                        // 图片样式
                         img.style.width = '100%';
                         img.style.height = 'auto';
                         img.style.display = 'block';

@@ -1,7 +1,13 @@
 {
   "title": "📚 nwebp 漫画库",
   "subtitle": "轻量级网页漫画阅读器",
-  "show_cover": true,
   "primary_color": "#667eea",
-  "footer": "⚡ 由 Rust 强力驱动 · nwebp 漫画浏览"
+  "footer": "⚡ 由 Rust 强力驱动 · nwebp 漫画浏览",
+  "columns": 2,
+  "popup_enabled": false,
+  "popup_title": "📢 公告",
+  "popup_content": "欢迎访问 nwebp 漫画库！",
+  "popup_confirm_text": "知道了",
+  "popup_cancel_text": "",
+  "popup_show_once": true
 }

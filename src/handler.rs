@@ -12,14 +12,12 @@ use crate::template;
 
 type AppStateRef = State<Arc<AppState>>;
 
-/// 首页 - 本子列表
 pub async fn index_handler(State(state): AppStateRef) -> Html<String> {
     let albums = state.scan_albums().await;
     let config = state.get_config().await;
     Html(template::render_index(&albums, &config))
 }
 
-/// 阅读页查询参数
 #[derive(Deserialize)]
 pub struct ViewerQuery {
     pub path: String,
@@ -35,7 +33,6 @@ pub async fn viewer_handler(
     }
 }
 
-/// API: 获取所有本子
 pub async fn api_albums(State(state): AppStateRef) -> Json<serde_json::Value> {
     let albums = state.scan_albums().await;
     Json(serde_json::json!({
@@ -44,7 +41,6 @@ pub async fn api_albums(State(state): AppStateRef) -> Json<serde_json::Value> {
     }))
 }
 
-/// API: 获取本子图片列表
 #[derive(Deserialize)]
 pub struct AlbumQuery {
     pub path: String,
@@ -60,7 +56,6 @@ pub async fn api_album_images(
     }
 }
 
-/// 原始图片服务（path 通过 query 参数传递）
 #[derive(Deserialize)]
 pub struct RawQuery {
     pub path: String,
@@ -105,7 +100,6 @@ pub async fn raw_image_handler(
     }
 }
 
-/// 根据扩展名猜测 Content-Type
 fn guess_content_type(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) {
         Some(ref ext) if ext == "jpg" || ext == "jpeg" => "image/jpeg",

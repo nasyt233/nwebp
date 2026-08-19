@@ -15,7 +15,12 @@
 
 ## 快速开始
 
-### 编译
+### 编译与安装
+
+# 通用一键安装脚本
+```bash
+bash -c "$(curl -L https://raw.gitcode.com/nasyt/nwebp/raw/master/install.sh)"
+```
 
 ```bash
 # 需要 Rust 工具链
@@ -91,9 +96,9 @@ comics/
 | `GET /api/album/{path}` | 获取指定本子的图片列表 |
 | `GET /raw/{path}` | 获取原始图片文件 |
 
-## 与 jmcomic 配合
+## 与 nasyt -j 或者 jmcomic 配合
 
-nwebp 可直接读取 jmcomic 下载的目录结构：
+nwebp 可直接读取 nasyt 或 jmcomic 下载的目录结构：
 
 ```bash
 # jmcomic 下载到 ./download 目录

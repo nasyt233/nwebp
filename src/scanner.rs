@@ -2,38 +2,61 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
 use walkdir::WalkDir;
 
-/// 图片扩展名
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp"];
 const CACHE_TTL: Duration = Duration::from_secs(5);
 
 // ---------- 配置结构 ----------
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub subtitle: String,
-    pub show_cover: bool,
+    #[serde(default)]
     pub primary_color: String,
+    #[serde(default)]
     pub footer: String,
+    #[serde(default = "default_columns")]
+    pub columns: u8,
+    #[serde(default)]
+    pub popup_enabled: bool,
+    #[serde(default)]
+    pub popup_title: String,
+    #[serde(default)]
+    pub popup_content: String,
+    #[serde(default)]
+    pub popup_confirm_text: String,
+    #[serde(default)]
+    pub popup_cancel_text: String,
+    #[serde(default)]
+    pub popup_show_once: bool,
 }
+
+fn default_columns() -> u8 { 2 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             title: "📚 nwebp 漫画库".to_string(),
             subtitle: "轻量级网页漫画阅读器".to_string(),
-            show_cover: true,
             primary_color: "#667eea".to_string(),
             footer: "⚡ 由 Rust 强力驱动 · nwebp 漫画浏览".to_string(),
+            columns: 2,
+            popup_enabled: false,
+            popup_title: "📢 公告".to_string(),
+            popup_content: "欢迎访问 nwebp 漫画库！".to_string(),
+            popup_confirm_text: "知道了".to_string(),
+            popup_cancel_text: "".to_string(),
+            popup_show_once: true,
         }
     }
 }
 
 impl Config {
-    /// 从文件加载配置，若不存在则创建默认
     pub fn load_from_file(root: &Path) -> Self {
         let path = root.join("nwebp.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -66,7 +89,6 @@ impl AppState {
         }
     }
 
-    /// 获取配置（只读）
     pub async fn get_config(&self) -> Config {
         self.config.read().await.clone()
     }
@@ -116,7 +138,6 @@ impl AppState {
         }
     }
 
-    /// 安全解析文件路径
     pub fn resolve_path(&self, rel_path: &str) -> Option<PathBuf> {
         if rel_path.is_empty() {
             return None;
@@ -137,6 +158,17 @@ impl AppState {
 }
 
 // ---------- 同步扫描函数 ----------
+fn get_modified_time(path: &Path) -> u64 {
+    if let Ok(metadata) = std::fs::metadata(path) {
+        if let Ok(time) = metadata.modified() {
+            if let Ok(duration) = time.duration_since(UNIX_EPOCH) {
+                return duration.as_secs();
+            }
+        }
+    }
+    0
+}
+
 fn do_scan_albums(root_dir: &Path) -> Vec<Album> {
     let mut albums = Vec::new();
     for entry in WalkDir::new(root_dir).min_depth(1).max_depth(3) {
@@ -152,7 +184,6 @@ fn do_scan_albums(root_dir: &Path) -> Vec<Album> {
         if images.is_empty() {
             continue;
         }
-        // 自然排序，确保第一张是真正的首图
         images.sort_by(|a, b| {
             let a_name = a.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
             let b_name = b.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
@@ -172,11 +203,15 @@ fn do_scan_albums(root_dir: &Path) -> Vec<Album> {
                 .to_string_lossy()
                 .to_string()
         });
+
+        let modified = get_modified_time(path);
+
         albums.push(Album {
             name,
             path: relative,
             image_count: images.len(),
             cover,
+            modified,
         });
     }
     albums.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -221,6 +256,7 @@ pub struct Album {
     pub path: String,
     pub image_count: usize,
     pub cover: Option<String>,
+    pub modified: u64,
 }
 
 #[derive(Serialize, Clone)]

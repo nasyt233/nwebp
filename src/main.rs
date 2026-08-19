@@ -103,7 +103,6 @@ async fn log_request(
     
     print!("{}", msg);
     
-    // 日志文件输出到 root 目录（即 args.dir 指定的目录）
     let log_path = root.join("nwebp.log");
     if let Ok(mut file) = OpenOptions::new()
         .append(true)
@@ -129,6 +128,13 @@ async fn log_middleware(
         format!("{}?{}", path, query)
     };
     
+    // 获取 Referer 用于判断是否为首页封面图请求
+    let referer = req.headers()
+        .get("referer")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    
     let response = next.run(req).await;
     
     let latency = start.elapsed();
@@ -140,18 +146,24 @@ async fn log_middleware(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0);
     
-    // 从 state 获取 root_dir
     let root_dir = state.0.root_dir.clone();
     
-    tokio::spawn(async move {
-        log_request(
-            &root_dir,
-            &full_path,
-            status,
-            latency.as_millis(),
-            response_size,
-        ).await;
-    });
+    // 检查是否为首页封面图请求（通过 Referer 判断）
+    let is_cover_request = full_path.starts_with("/raw?path=") 
+        && (referer == "" || referer.contains("/") && !referer.contains("/viewer"));
+    
+    // 如果是首页封面图请求，不记录日志
+    if !is_cover_request {
+        tokio::spawn(async move {
+            log_request(
+                &root_dir,
+                &full_path,
+                status,
+                latency.as_millis(),
+                response_size,
+            ).await;
+        });
+    }
     
     response
 }
@@ -187,7 +199,6 @@ async fn main() -> anyhow::Result<()> {
     
     let log_path = root_dir.join("nwebp.log");
     
-    // 清空旧日志
     if let Ok(mut file) = OpenOptions::new()
         .write(true)
         .create(true)
@@ -204,7 +215,6 @@ async fn main() -> anyhow::Result<()> {
         let _ = file.flush();
     }
     
-    // 打印启动横幅
     print_banner(&root_dir, &args.host, args.port);
     
     let state = Arc::new(AppState::new(root_dir));

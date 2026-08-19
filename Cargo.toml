@@ -1,6 +1,6 @@
 [package]
 name = "nwebp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "轻量级漫画图片在线浏览服务器，支持翻页阅读"
 readme = "README.md"

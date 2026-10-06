@@ -1,0 +1,12 @@
+[Unit]
+Description=nwebp service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root
+Environment="HOME=/root"
+ExecStart=/usr/bin/nwebp /root/.nasyt/jm 7891
+
+[Install]
+WantedBy=multi-user.target

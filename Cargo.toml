@@ -1,6 +1,6 @@
 [package]
 name = "nwebp"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "轻量级漫画图片在线浏览服务器，支持翻页阅读"
 readme = "README.md"
@@ -26,3 +26,10 @@ percent-encoding = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = "0.4"
+
+[profile.release]
+lto = true
+strip = true
+opt-level = "z" 
+codegen-units = 1
+panic = 'abort'
